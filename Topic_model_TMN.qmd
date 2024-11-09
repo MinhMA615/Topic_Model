@@ -1,0 +1,130 @@
+---
+title: "Topic_model_TMN"
+author: "Truc Minh Nguyen"
+format: html
+editor: visual
+---
+
+# Load Libraries
+
+```{r}
+#| warning: false
+library(tidyverse)
+library(topicmodels)
+library(tidytext)
+library(lexicon)
+library(factoextra)
+
+```
+
+Read in dataset
+
+```{r}
+movies <- read.csv("movie_plots.csv", header = TRUE)
+
+```
+
+Unnest tokens using tidytext:
+
+```{r}
+#takes the plot column and make it one word per row 
+plots_by_word <- movies |> unnest_tokens(word, Plot) 
+
+#take out words like "the", "to", "of"... 
+#count how many of the remaining words appear in the plot
+plot_word_counts <- plots_by_word |> anti_join(stop_words) |> 
+                                  count(Movie.Name, word, sort = TRUE)
+
+```
+
+Remove common names using lexicon:
+
+```{r}
+data("freq_first_names")
+data("freq_last_names")
+
+first_names <- tolower(freq_first_names$Name) #convert to lower case
+last_names <- tolower(freq_last_names)
+
+plot_word_counts <- plot_word_counts |> filter(!(word %in% first_names))
+plot_word_counts <- plot_word_counts |> filter(!(word %in% last_names))
+
+```
+
+Cast word counts to document term matrix
+
+```{r}
+#| output: false
+#| 
+plots_dtm <- plot_word_counts |> cast_dtm(Movie.Name, word, n)
+```
+
+Look at dimensions of matrix
+
+```{r}
+
+#Distinct words
+dim(plot_word_counts |> distinct(word))[1]
+dim(movies)
+
+```
+
+LDA with 30 topics:
+
+```{r}
+
+plots_lda <- LDA(plots_dtm, k = 30, control = list(seed = 1066))
+
+```
+
+Retrieving Gammas:
+
+```{r}
+#| output: false
+plots_gamma <- tidy(plots_lda, matrix = "gamma")
+#gamma is per-document-per-topic probbabilities 
+#each values is an estimated proportion of words from that document that are generated 
+#from that topic
+
+```
+
+Retrieving Betas:
+
+```{r}
+plots_beta <- tidy(plots_lda, matrix = "beta")
+#beta is the probability of that term being generated from that topic
+
+```
+
+Pivoting the plots_gamma table wider so we can cluster by gammas for each topic
+
+```{r}
+#| output: false 
+plots_gamma_wider <- plots_gamma |> pivot_wider(names_from = topic, 
+                                                values_from = gamma)
+#this will give a document and 30 values of gammas for 30 topics per row, 
+#more neatly orgranized
+
+```
+
+Create 8 clusters for 8 genres:
+
+```{r}
+
+set.seed(8)
+plots_gamma_wider_no_na <- plots_gamma_wider |> drop_na()
+cluster <- kmeans(plots_gamma_wider_no_na |> select(-document), 10)
+fviz_cluster(cluster, data = plots_gamma_wider_no_na |> select(-document))
+
+```
+
+Look into genres in each cluster. Read in data with genres:
+
+```{r}
+
+#| output: false
+english_movies_with_genres <- read.csv("movie_plots_with_genres.csv")
+clusters <- cluster[["cluster"]]
+plots_gamma_wider$cluster <- clusters
+
+```
